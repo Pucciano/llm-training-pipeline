@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 DATASET_PATH = Path("../data/dataset.jsonl")
@@ -52,7 +52,7 @@ def main():
                 "input": input_text,
                 "output": output,
                 "meta": {
-                    "created_at": datetime.utcnow().isoformat() + "Z",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "tags": tags,
                     "source": source,
                     "license": license_info
