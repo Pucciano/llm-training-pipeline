@@ -41,12 +41,21 @@ def main():
                 print("⚠️ Warnung: Output ist leer. Eingabe wird übersprungen.\n")
                 continue
 
+            tags_input = ask_input("🏷️ Themen-Tags (z.B. 'forensik, python, grammatik')")
+            tags = [tag.strip() for tag in tags_input.split(",") if tag.strip()]
+
+            source = ask_input("📚 Quelle der Daten (z.B. 'OpenBook: Deutsch A1 – Lektion 3')")
+            license_info = ask_input("📄 Lizenz (z.B. 'CC-BY-SA 4.0', 'privat', 'Alle Rechte vorbehalten')")
+
             entry = {
                 "instruction": instruction,
                 "input": input_text,
                 "output": output,
                 "meta": {
-                    "created_at": datetime.utcnow().isoformat() + "Z"
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                    "tags": tags,
+                    "source": source,
+                    "license": license_info
                 }
             }
 
