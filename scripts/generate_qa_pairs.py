@@ -1,4 +1,3 @@
-#scripts/generate_qa_pairs.py
 import json
 import uuid
 import httpx
@@ -7,9 +6,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import List
 
-# Pfade
 MARKDOWN_FOLDER = Path("../data/markdown")
-METADATA_FILE = Path("../data/metadata/metadata.jsonl")
+METADATA_FILE = Path("../data/markdown/metadata.jsonl")
 OUTPUT_FILE = Path("../data/generated/qa_pairs.jsonl")
 LMSTUDIO_API = "http://localhost:1234/v1/chat/completions"
 
@@ -17,6 +15,12 @@ LMSTUDIO_API = "http://localhost:1234/v1/chat/completions"
 MAX_CHARS = 10240
 HEADERS = {"Content-Type": "application/json"}
 MODEL = "qwen/qwen3-4b"
+DEBUG = False
+
+def debug_print(message: str):
+    if DEBUG:
+        print(message)
+
 
 def split_text(text: str, max_length: int = MAX_CHARS) -> List[str]:
     """
@@ -59,7 +63,7 @@ def call_llm(prompt: str) -> dict:
         "max_tokens": 32768,
         "stream": False,
         "messages": [
-            { "role": "user", "content": prompt }
+            {"role": "user", "content": prompt}
         ]
     }
 
@@ -70,8 +74,9 @@ def call_llm(prompt: str) -> dict:
 
         content = raw["choices"][0]["message"]["content"]
 
-        print("🧪 Rohantwort erhalten:")
-        print(content[:300], "...")
+        if DEBUG:
+            print("🧪 Rohantwort erhalten:")
+            print(content[:1000] + "\n…")  # Begrenzt auf 1000 Zeichen
 
         # Entferne evtl. <think>…</think> Wrapper
         if "<think>" in content:
@@ -119,6 +124,7 @@ def generate_qa_pairs():
                         "input": pair["input"],
                         "output": pair["output"],
                         "source_file": md_path.name,
+                        "file_path": str(md_path.resolve()),
                         "file_hash_md5": hashlib.md5(md_path.read_bytes()).hexdigest(),
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "license": metadata_map.get(md_path.name, {}).get("license", "Unbekannt"),
