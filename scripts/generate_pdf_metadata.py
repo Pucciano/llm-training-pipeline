@@ -5,7 +5,7 @@ import fitz  # PyMuPDF
 import json
 
 PDF_FOLDER = "../data/pdf"
-OUTPUT_FILE = "../data/pdf_metadata.jsonl"
+OUTPUT_FILE = "../data/markdown/metadata.jsonl"
 
 DEFAULT_SOURCE = "Unbekannt"
 DEFAULT_LICENSE = "Unbekannt"
