@@ -1,12 +1,3 @@
-"""
-QA-Paar-Generator für Markdown-Dokumente
-
-Dieses Skript lädt alle Markdown-Dateien aus einem konfigurierten Verzeichnis,
-teilt deren Inhalt in Segmente und sendet diese an ein lokales LLM über die
-LM Studio API, um Frage-Antwort-Paare zu generieren. Die Ergebnisse werden
-zusammen mit Metadaten in einer JSONL-Datei gespeichert.
-"""
-
 import json
 import uuid
 import httpx
@@ -14,58 +5,66 @@ import hashlib
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import List
+from tiktoken import encoding_for_model
 
-# Konfiguration: Verzeichnisse und Pfade
+# Pfade und API-Endpunkt
 MARKDOWN_FOLDER = Path("../data/markdown")
 METADATA_FILE = Path("../data/markdown/metadata.jsonl")
 OUTPUT_FILE = Path("../data/generated/qa_pairs.jsonl")
-
-# LM Studio API-Konfiguration
 LMSTUDIO_API = "http://localhost:1234/v1/chat/completions"
-HEADERS = {"Content-Type": "application/json"}
+
+# LLM-Konfiguration
 MODEL = "qwen/qwen3-4b"
 TEMPERATURE = 0.8
-MAX_TOKENS = 32768
+MAX_TOKENS = 32768  # Maximale Tokenanzahl der Ausgabe
+WINDOW_TOKENS = 2048  # Sliding Window Größe
+STRIDE_TOKENS = 1024  # Schrittweite für Sliding Window
+HEADERS = {"Content-Type": "application/json"}
 
-# Maximale Segmentlänge in Zeichen
-MAX_CHARS = 10240
+# Debug-Modus
+DEBUG = True
 
-# Debug-Modus zur Protokollierung von Zwischenschritten
-DEBUG = False
+# Initialisiere Tokenizer (tiktoken erfordert spezifisches Modell)
+try:
+    tokenizer = encoding_for_model("gpt-3.5-turbo")  # Kompatibler Tokenizer (auch für GGUF geeignet)
+except Exception:
+    tokenizer = encoding_for_model("cl100k_base")
 
 
 def debug_print(message: str):
-    """Gibt eine Debug-Nachricht aus, wenn der Debug-Modus aktiv ist."""
     if DEBUG:
         print(message)
 
 
-def split_text(text: str, max_length: int = MAX_CHARS) -> List[str]:
-    """
-    Teilt den Text in Abschnitte auf, die die maximale Zeichenzahl nicht überschreiten.
-    Bevorzugt wird an Zeilenumbrüchen getrennt, um logische Einheiten zu erhalten.
+def tokenize(text: str) -> List[int]:
+    """Tokenisiert einen Text und gibt eine Liste von Token-IDs zurück."""
+    return tokenizer.encode(text)
 
-    :param text: Vollständiger Eingabetext
-    :param max_length: Maximale Länge eines Segments in Zeichen
-    :return: Liste segmentierter Textblöcke
+
+def detokenize(tokens: List[int]) -> str:
+    """Detokenisiert eine Liste von Token-IDs zurück in einen String."""
+    return tokenizer.decode(tokens)
+
+
+def sliding_windows(text: str, window_size: int, stride: int) -> List[str]:
     """
-    segments, current = [], ""
-    for line in text.splitlines():
-        if len(current) + len(line) + 1 > max_length:
-            if current.strip():
-                segments.append(current.strip())
-            current = ""
-        current += line + "\n"
-    if current.strip():
-        segments.append(current.strip())
-    return segments
+    Erzeugt überlappende Textfenster basierend auf Tokenlängen (Sliding-Window-Prinzip).
+    """
+    token_ids = tokenize(text)
+    windows = []
+    i = 0
+    while i < len(token_ids):
+        chunk = token_ids[i:i + window_size]
+        windows.append(detokenize(chunk))
+        if i + window_size >= len(token_ids):
+            break
+        i += stride
+    return windows
 
 
 def load_metadata() -> dict:
     """
-    Lädt eine JSONL-Datei mit Metadaten zu den Markdown-Dateien.
-
-    :return: Dictionary mit Dateinamen als Schlüssel und Metadaten als Wert
+    Lädt die Metadaten aus einer JSONL-Datei und erstellt ein Mapping nach Dateinamen.
     """
     if not METADATA_FILE.exists():
         print("⚠️  Metadaten-Datei nicht gefunden!")
@@ -80,10 +79,8 @@ def load_metadata() -> dict:
 
 def call_llm(prompt: str) -> dict:
     """
-    Sendet einen Prompt an die LM Studio API und erwartet ein JSON-Format mit QA-Paaren.
-
-    :param prompt: Der zu analysierende Text
-    :return: Antwort des Modells als Dictionary
+    Sendet einen Prompt an das lokal laufende Sprachmodell (LM Studio) und erwartet strukturierte JSON-Antwort.
+    Zusätzlich wird der tatsächliche Tokenverbrauch überwacht.
     """
     payload = {
         "model": MODEL,
@@ -101,16 +98,19 @@ def call_llm(prompt: str) -> dict:
         raw = response.json()
 
         content = raw["choices"][0]["message"]["content"]
+        usage = raw.get("usage", {})
 
-        debug_print("🧪 Rohantwort erhalten:\n" + content[:1000] + "\n…")
+        if DEBUG:
+            print(f"🧪 Tokenverbrauch (Prompt/Input): {usage.get('prompt_tokens')} Tokens")
+            print(f"🧪 Tokenverbrauch (Output): {usage.get('completion_tokens')} Tokens")
+            print(f"🧪 Gesamt: {usage.get('total_tokens')} Tokens")
 
-        # Entferne optionale <think>-Tags
+        # Entferne evtl. <think> Wrapper
         if "<think>" in content:
             content = content.split("<think>")[-1]
         if "</think>" in content:
             content = content.split("</think>")[0]
 
-        # Extrahiere den JSON-Bereich
         start = content.find("{")
         end = content.rfind("}") + 1
         json_str = content[start:end]
@@ -124,8 +124,11 @@ def call_llm(prompt: str) -> dict:
 
 def generate_qa_pairs():
     """
-    Durchläuft alle Markdown-Dateien im definierten Ordner, generiert QA-Paare,
-    und speichert diese inklusive Metadaten in einer JSONL-Datei.
+    Hauptfunktion zur QA-Generierung:
+    - Liest Markdown-Dateien ein
+    - Teilt sie in Sliding-Window-Segmente auf
+    - Sendet diese an das LLM
+    - Speichert strukturierte QA-Daten in JSONL
     """
     metadata_map = load_metadata()
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -133,12 +136,12 @@ def generate_qa_pairs():
     for md_path in MARKDOWN_FOLDER.glob("*.md"):
         print(f"📄 Verarbeite Datei: {md_path.name}")
         text = md_path.read_text(encoding="utf-8")
-        segments = split_text(text)
+        segments = sliding_windows(text, window_size=WINDOW_TOKENS, stride=STRIDE_TOKENS)
 
         for i, segment in enumerate(segments):
-            print(f"✂️  Segment {i + 1} von {len(segments)}")
-            llm_response = call_llm(segment)
+            print(f"✂️  Sliding-Window Segment {i + 1} von {len(segments)}")
 
+            llm_response = call_llm(segment)
             if not llm_response.get("qa_pairs"):
                 print("⚠️  Keine QA-Paare empfangen. Segment wird übersprungen.")
                 continue
