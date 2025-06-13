@@ -1,9 +1,10 @@
-import gradio as gr
-import pandas as pd
-from pandas.io.formats.style import Styler
 import json
 from pathlib import Path
 from typing import List
+
+import gradio as gr
+import pandas as pd
+from pandas.io.formats.style import Styler
 
 # 📁 Pfade
 QA_PAIRS_PATH = Path("../data/generated/qa_pairs.jsonl")
@@ -11,6 +12,9 @@ QA_PAIRS_PATH = Path("../data/generated/qa_pairs.jsonl")
 # 📊 Anzeigeeinstellungen
 PAGE_SIZES = [10, 25, 50, 100]
 DEFAULT_PAGE_SIZE = 10
+
+# Globale Variabeln
+ALL_DATA = pd.DataFrame()  # Globale Datenbasis
 
 
 def load_qa_pairs_as_dataframe(source_filter: str = "", limit: int = 100, offset: int = 0) -> pd.DataFrame:
@@ -86,24 +90,32 @@ def update_table_view(page_size: int, page_number: int, source_filter: str) -> p
     :param source_filter: Aktiver Filter
     :return: Formatierter DataFrame zur Anzeige
     """
+    global ALL_DATA
     offset = page_size * page_number
-    df = load_qa_pairs_as_dataframe(source_filter, limit=page_size, offset=offset)
-    return style_dataframe(df)
+    ALL_DATA = load_qa_pairs_as_dataframe(source_filter, limit=99999, offset=0)  # Lade alle für späteres Mergen
+    df_page = ALL_DATA.iloc[offset:offset + page_size].reset_index(drop=True)
+    return df_page
 
 
-def save_dataframe_to_jsonl(df: pd.DataFrame) -> str:
+def save_dataframe_to_jsonl(page_df: pd.DataFrame, page_size: int, page_number: int) -> str:
     """
     Speichert den bearbeiteten DataFrame zurück in eine JSONL-Datei.
 
     :param df: Geänderter DataFrame
     :return: Statusmeldung
     """
+    global ALL_DATA
     try:
+        offset = page_size * page_number
+        # Aktualisiere die betroffenen Zeilen im Gesamtdatensatz
+        for i in range(len(page_df)):
+            ALL_DATA.iloc[offset + i] = page_df.iloc[i]
+
         with open(QA_PAIRS_PATH, "w", encoding="utf-8") as f:
-            for _, row in df.iterrows():
+            for _, row in ALL_DATA.iterrows():
                 json.dump(row.dropna().to_dict(), f, ensure_ascii=False)
                 f.write("\n")
-        return "✅ Änderungen wurden gespeichert."
+        return f"✅ Seite {page_number} gespeichert ({len(page_df)} Einträge aktualisiert)."
     except Exception as e:
         return f"❌ Fehler beim Speichern: {str(e)}"
 
@@ -118,7 +130,7 @@ with gr.Blocks(title="QA-Pairs Annotator") as demo:
         source_filter = gr.Dropdown(label="Quelle filtern", choices=[""] + get_source_options())
         refresh_btn = gr.Button("🔍 Laden")
 
-    df_view = gr.Dataframe(label="QA-Daten", interactive=True, wrap=True, row_count=10)
+    df_view = gr.Dataframe(label="QA-Daten", interactive=True, wrap=True, row_count=PAGE_SIZES)
     save_btn = gr.Button("💾 Speichern")
     status_box = gr.Textbox(label="Status", interactive=False)
 
@@ -130,7 +142,7 @@ with gr.Blocks(title="QA-Pairs Annotator") as demo:
 
     save_btn.click(
         fn=save_dataframe_to_jsonl,
-        inputs=df_view,
+        inputs=[df_view, page_size, page_number],
         outputs=status_box
     )
 
