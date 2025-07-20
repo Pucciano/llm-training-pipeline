@@ -1,0 +1,3 @@
+[submodule "submodule/alpaca-dataset-generator"]
+	path = submodule/alpaca-dataset-generator
+	url = https://github.com/Pucciano/alpaca-dataset-generator.git
