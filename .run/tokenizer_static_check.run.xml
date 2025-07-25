@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="00_train_tokenizer" type="PythonConfigurationType" factoryName="Python">
+  <configuration default="false" name="tokenizer_static_check" type="PythonConfigurationType" factoryName="Python">
     <module name="llm-training-pipeline" />
     <option name="ENV_FILES" value="" />
     <option name="INTERPRETER_OPTIONS" value="" />
@@ -14,8 +14,8 @@
     <option name="ADD_CONTENT_ROOTS" value="true" />
     <option name="ADD_SOURCE_ROOTS" value="true" />
     <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
-    <option name="SCRIPT_NAME" value="$PROJECT_DIR$/training/00_train_tokenizer.py" />
-    <option name="PARAMETERS" value="--corpus-dir $ContentRoot$/data/corpus --output $ContentRoot$/data/tokenizer/tokenizer_de_jura.json" />
+    <option name="SCRIPT_NAME" value="$PROJECT_DIR$/scripts/tokenizer_static_check.py" />
+    <option name="PARAMETERS" value="--tokenizer $ContentRoot$/data/tokenizer/tokenizer_de_jura.json --specials $ContentRoot$/data/tokenizer/specials.txt --corpus $ContentRoot$/data/corpus/de/law --ratio-min 0.15 --ratio-max 0.35" />
     <option name="SHOW_COMMAND_LINE" value="false" />
     <option name="EMULATE_TERMINAL" value="false" />
     <option name="MODULE_MODE" value="false" />
