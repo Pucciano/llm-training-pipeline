@@ -2,3 +2,7 @@
 .venv/
 data/
 model/
+notebooks/merged_model
+notebooks/torch_compile_debug
+notebooks/unsloth_compiled_cache
+notebooks/outputs

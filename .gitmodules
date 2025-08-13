@@ -1,3 +1,6 @@
 [submodule "submodule/alpaca-dataset-generator"]
 	path = submodule/alpaca-dataset-generator
 	url = https://github.com/Pucciano/alpaca-dataset-generator.git
+[submodule "submodule/llama.cpp"]
+	path = submodule/llama.cpp
+	url = https://github.com/ggml-org/llama.cpp.git
