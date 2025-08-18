@@ -9,6 +9,7 @@ Benötigte Pakete:
 """
 
 from pathlib import Path
+import re
 
 import ebooklib
 from bs4 import BeautifulSoup
@@ -16,8 +17,61 @@ from ebooklib import epub
 from markdownify import markdownify as md
 
 # ➡️  Ordnerpfade anpassen, falls nötig
-EPUB_FOLDER = "../data/epub"
-OUTPUT_FOLDER = "../data/markdown"
+EPUB_FOLDER = "../data/epub/de"
+OUTPUT_FOLDER = "../data/corpus/de"
+
+
+XML_DECL_RE = re.compile(r'^\s*<\?xml[^>]*\?>\s*', flags=re.IGNORECASE)
+
+
+def _preclean_soup(soup: BeautifulSoup) -> None:
+    """DOM-Bereinigung vor Markdownify."""
+    # 0) TOC-Container entfernen
+    for tag in soup.select('nav[epub\\:type~="toc"], nav[role="doc-toc"], [role="doc-toc"]'):
+        tag.decompose()
+
+    # 1) Audio entfernen
+    for tag in soup.find_all("audio"):
+        tag.decompose()
+
+    # 2) Seitenzahlen-Spans entfernen
+    for tag in soup.select("span.c1.c3"):
+        tag.decompose()
+
+    # 3) Bilder entfernen
+    for tag in soup.find_all("img"):
+        tag.decompose()
+
+
+def _fix_german_quotes(text: str) -> str:
+    """
+    Ersetzt französische Guillemets durch deutsche Anführungszeichen.
+    »...« -> „...“
+    """
+    text = re.sub(r"»", "„", text)
+    text = re.sub(r"«", "“", text)
+    return text
+
+
+def _extract_title_and_strip_h1(soup: BeautifulSoup) -> str:
+    """
+    Ermittelt die Dokumentüberschrift.
+    Priorität: erstes <h1> (Textinhalt), sonst <title>.
+    Entfernt das verwendete <h1> aus dem DOM, damit markdownify es nicht erneut rendert.
+    """
+    # 1) echtes H1
+    h1 = soup.find("h1")
+    if h1:
+        title = h1.get_text(strip=True)
+        h1.decompose()
+        return title.strip()
+
+    # 2) <title>
+    if soup.title:
+        return soup.title.get_text(strip=True)
+
+    # 3) Fallback
+    return ""
 
 
 def convert_epub_to_markdown(epub_path: Path) -> str:
@@ -34,11 +88,34 @@ def convert_epub_to_markdown(epub_path: Path) -> str:
     markdown_parts = []
 
     for item in book.get_items():
-        # Dokument‑HTML extrahieren
         if item.get_type() == ebooklib.ITEM_DOCUMENT:
-            soup = BeautifulSoup(item.get_content(), "html.parser")
-            html_as_markdown = md(str(soup), heading_style="ATX")
-            markdown_parts.append(html_as_markdown.strip())
+            # Rohinhalt laden und XML-Deklaration vor dem Parsen entfernen
+            raw = item.get_content()
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="ignore")
+            raw = XML_DECL_RE.sub("", raw, count=1)
+
+            soup = BeautifulSoup(raw, "html.parser")
+
+            # Vorreinigung auf DOM-Ebene
+            _preclean_soup(soup)
+
+            # Titel ermitteln und H1 entfernen
+            title = _extract_title_and_strip_h1(soup)
+
+            # HTML -> Markdown
+            body_md = md(str(soup), heading_style="ATX").strip()
+
+            # Deutsche Anführungszeichen korrigieren
+            body_md = _fix_german_quotes(body_md)
+
+            # Überschrift setzen, unabhängig von H-Leveln in der Quelle
+            if title:
+                part = f"# {title}\n\n{body_md}".strip()
+            else:
+                part = body_md
+
+            markdown_parts.append(part)
 
     # Kapitel sauber trennen
     return "\n\n---\n\n".join(markdown_parts)
@@ -55,13 +132,15 @@ def clean_markdown(
 ) -> str:
     """
     Bereinigt Markdown‑Text mithilfe verschiedener Strategien.
-
-    Parameter siehe PDF‑Skript.
     """
     import re
     import unicodedata
 
     def _remove_non_printable(s: str) -> str:
+        # explizite Problemzeichen rauswerfen
+        s = s.replace("\f", "")  # Form Feed U+000C
+        s = s.replace("\uFFFC", "")  # Object Replacement Character U+FFFC
+
         return "".join(
             c for c in s if unicodedata.category(c)[0] != "C" or c in ("\n", "\t")
         )
@@ -90,12 +169,14 @@ def clean_markdown(
         return line
 
     def _strip_markdown(text: str) -> str:
-        # Sehr einfache Markdown‑Entfernung
         text = re.sub(r"(!?\[.*?\]\(.*?\))", "", text)
         text = re.sub(r"`{1,3}(.*?)`{1,3}", r"\1", text)
         text = re.sub(r"[*_]{1,3}(.*?)?[*_]{1,3}", r"\1", text)
         text = re.sub(r"#+ ", "", text)
         return text.strip()
+
+    # Zusätzliche Sicherung: Guillemets -> deutsche Anführungszeichen
+    markdown_text = _fix_german_quotes(markdown_text)
 
     if remove_non_printable:
         markdown_text = _remove_non_printable(markdown_text)
@@ -117,19 +198,18 @@ def clean_markdown(
 
         is_list_item = False
         if fix_lists and (
-                line.lstrip().startswith(("- ", "* ", "-", "*"))
-                or re.match(r"^\s*\d+\.", line)
+            line.lstrip().startswith(("- ", "* ", "-", "*"))
+            or re.match(r"^\s*\d+\.", line)
         ):
             line = _fix_list_item(line)
             is_list_item = True
 
-        if remove_multiple_blanks:
-            if line.strip() == "" and prev_line.strip() == "":
-                i += 1
-                continue
+        if remove_multiple_blanks and line.strip() == "" and prev_line.strip() == "":
+            i += 1
+            continue
 
         if i > 0 and (
-                line.lstrip().startswith(("#", "-", "*")) or re.match(r"^\s*\d+\.", line)
+            line.lstrip().startswith(("#", "-", "*")) or re.match(r"^\s*\d+\.", line)
         ):
             if cleaned_lines and cleaned_lines[-1].strip() != "":
                 if not (in_list and is_list_item):
@@ -140,7 +220,6 @@ def clean_markdown(
         in_list = is_list_item
         i += 1
 
-    # trailing blanks
     while cleaned_lines and cleaned_lines[-1].strip() == "":
         cleaned_lines.pop()
     cleaned_lines.append("")
@@ -156,25 +235,11 @@ def clean_markdown(
 
 
 def save_markdown(markdown_text: str, output_path: Path):
-    """
-    Speichert Markdown‑Text als Datei.
-
-    Args:
-        markdown_text (str): Inhalt.
-        output_path (Path): Zielpfad.
-    """
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(markdown_text)
 
 
 def process_all_epubs(input_dir: Path, output_dir: Path):
-    """
-    Durchläuft alle EPUB‑Dateien im Eingabeordner und konvertiert sie.
-
-    Args:
-        input_dir (Path): Verzeichnis mit EPUBs.
-        output_dir (Path): Zielverzeichnis für Markdown.
-    """
     if not input_dir.exists():
         print(f"❌ Eingabeordner nicht gefunden: {input_dir}")
         return
@@ -201,9 +266,6 @@ def process_all_epubs(input_dir: Path, output_dir: Path):
 
 
 def main():
-    """
-    Einstiegspunkt für die Massenkonvertierung.
-    """
     input_dir = Path(EPUB_FOLDER)
     output_dir = Path(OUTPUT_FOLDER)
 
